@@ -1,7 +1,10 @@
 use std::borrow::Cow;
+use std::fmt::{Debug, Formatter};
+use std::io::{Error, ErrorKind};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use anyhow::{bail, Context};
 use bytes::BufMut;
+use derive_more::Display;
 use smallvec::{smallvec, SmallVec};
 use tokio::io::{AsyncWrite, AsyncWriteExt, AsyncBufRead, AsyncReadExt};
 use num_enum::IntoPrimitive;
@@ -78,20 +81,30 @@ impl<S> Acceptor<S> {
             Address::default(self.is_v6).write(&mut buf);
         }
 
-        self.stream.write_u16(port.unwrap_or(0)).await.context("Writing port")?;
+        buf.put_u16(port.unwrap_or(0));
+
+        self.stream.write_all(&buf).await.context("Writing reply")?;
         Ok(())
     }
 }
 
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Display)]
 pub enum Address<'a> {
     IP(IpAddr),
     Domain(Cow<'a, str>),
 }
 
-impl<'a> Address<'a> {
+impl<'a> Debug for Address<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Address::IP(addr) => f.write_str(addr.to_string().as_str()),
+            Address::Domain(addr) => f.write_str(addr.as_ref()),
+        }
+    }
+}
 
+impl<'a> Address<'a> {
     fn write(&self, w: &mut impl BufMut) {
         match self {
             Address::IP(IpAddr::V4(addr)) => {
@@ -149,6 +162,7 @@ impl Address<'static> {
 
 }
 
+#[derive(Debug)]
 pub enum Request<'a> {
     Connect(Address<'a>, u16),
     Bind(Address<'a>, u16),
@@ -166,4 +180,14 @@ pub enum FailStatus {
     TtlExpired = 6,
     CommandNotSupported = 7,
     AddressTypeNotSupported = 8,
+}
+
+impl From<&Error> for FailStatus {
+    fn from(value: &Error) -> Self {
+        match value.kind() {
+            ErrorKind::AddrNotAvailable => FailStatus::HostUnreachable,
+            ErrorKind::ConnectionRefused => FailStatus::ConnectionRefused,
+            _ => FailStatus::GeneralFailure,
+        }
+    }
 }
