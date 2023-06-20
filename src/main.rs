@@ -6,6 +6,7 @@ use tokio::signal::ctrl_c;
 use tokio::spawn;
 
 mod socks5;
+mod tcpman;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
